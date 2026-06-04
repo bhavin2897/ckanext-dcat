@@ -1142,6 +1142,24 @@ The latter form allows chaininig commands for more complex metadata processing, 
 
 For the full list of options check `ckan dcat consume --help` and  `ckan dcat produce --help`.
 
+## LinkML compatibility for CKAN 2.9 / Python 3.7
+
+The `test-server` deployment runs CKAN 2.9 on Python 3.7 and uses
+`linkml-runtime==1.4.0`.
+
+Current DCAT-AP+ and ChemDCAT-AP schemas use newer LinkML keywords such as
+`implements` and `bindings`, which are not supported by LinkML Runtime 1.4.0.
+
+To keep the original schema files unchanged, `ckanext/dcat/profiles/dcat_ap_plus.py`
+creates a temporary sanitized copy of the schema directory at runtime. The sanitizer:
+
+- removes unsupported LinkML 1.8+ keywords such as `implements` and `bindings`
+- rewrites the remote `dcatapplus:latest/schema/dcat_ap_plus` import to a local sanitized `dcat_ap_plus.yaml`
+- creates a local sanitized `dcat_ap_plus.yaml` from the PURL when it is missing locally
+
+Note: This compatibility code should be removed once the deployment is upgraded to
+Python >=3.9 and a newer LinkML Runtime version.
+
 ## Running the Tests
 
 To run the tests do:

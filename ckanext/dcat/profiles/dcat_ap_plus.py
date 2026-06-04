@@ -67,6 +67,20 @@ from linkml_runtime.utils.schemaview import SchemaView
 
 # Module-level cache for SchemaView instances
 # Key: schema_name, Value: SchemaView object
+
+# Compatibility layer for CKAN 2.9 / Python 3.7 / linkml-runtime==1.4.0.
+#
+# The upstream DCAT-AP+ and ChemDCAT-AP schemas use newer LinkML keywords
+# such as "implements" and "bindings", which are not supported by
+# linkml-runtime 1.4.0.
+#
+# Instead of editing the schema files directly, we create a temporary sanitized
+# copy at runtime and remove only unsupported keys before passing it to
+# SchemaView.
+#
+# This can be removed once the server is upgraded to Python >=3.9 and a newer
+# linkml-runtime version.
+
 _SCHEMA_VIEW_CACHE = {}
 def _strip_linkml_18_keywords_for_linkml_14(yaml_text):
     """
