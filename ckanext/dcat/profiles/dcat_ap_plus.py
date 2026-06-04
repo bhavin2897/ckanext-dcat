@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 from decimal import Decimal, DecimalException
 import requests
 from rdflib import term, URIRef, BNode, Literal, Graph
@@ -93,32 +94,68 @@ class Helpers(object):
 
         Returns: SchemaView instance or None
         """
+        # 1. Check Memory Cache
         if schema_name in _SCHEMA_VIEW_CACHE:
             return _SCHEMA_VIEW_CACHE[schema_name]
 
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        local_yaml_path = os.path.normpath(
-            os.path.join(current_dir, "..", "schemas", local_filename)
-        )
+        schema_content = None
+        source = ""
 
+        # 2. Dynamic Path Calculation (Works for both profiles)
+        # Assumes: profiles/profile.py and schemas/file.yaml are siblings
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        local_yaml_path = os.path.normpath(os.path.join(current_dir, "..", "schemas", local_filename))
+
+        # 3. Try Local File
         try:
             if os.path.exists(local_yaml_path):
                 sv = SchemaView(local_yaml_path, merge_imports=True)
                 _SCHEMA_VIEW_CACHE[schema_name] = sv
-                log.info(f"Schema '{schema_name}' loaded from local file: {local_yaml_path}")
+                log.info(f"Schema '{schema_name}' loaded from local file and cached: {local_yaml_path}")
                 return sv
         except Exception as e:
             log.error(f"Failed to parse local schema '{schema_name}' at {local_yaml_path}: {e}")
 
-        try:
-            log.debug(f"Loading schema '{schema_name}' from PURL: {purl}")
-            sv = SchemaView(purl, merge_imports=True)
-            _SCHEMA_VIEW_CACHE[schema_name] = sv
-            log.info(f"Schema '{schema_name}' loaded from remote PURL.")
-            return sv
-        except Exception as e:
-            log.error(f"Failed to parse schema '{schema_name}' from PURL {purl}: {e}")
-            return None
+        # 4. Try Remote PURL
+        if not schema_content:
+            try:
+                log.debug(f"Fetching schema '{schema_name}' from PURL: {purl}")
+                resp = requests.get(purl, headers={"Accept": "application/yaml, text/yaml"}, timeout=10)
+                resp.raise_for_status()
+                schema_content = resp.text
+                source = "remote PURL"
+            except Exception as e:
+                log.error(f"Failed to fetch schema '{schema_name}' from remote: {e}")
+                return None
+
+        # 5. Parse and Cache
+        if schema_content:
+            tmp_path = None
+            try:
+                # LinkML Runtime 1.4.0 expects SchemaView input to be a file path,
+                # not raw YAML content. Write remote schema content to a temp file.
+                fd, tmp_path = tempfile.mkstemp(
+                    prefix="%s_" % schema_name,
+                    suffix=".yaml"
+                )
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(schema_content)
+
+                sv = SchemaView(tmp_path, merge_imports=True)
+                _SCHEMA_VIEW_CACHE[schema_name] = sv
+                log.info(f"Schema '{schema_name}' loaded from {source} and cached.")
+                return sv
+            except Exception as e:
+                log.error(f"Failed to parse schema '{schema_name}': {e}")
+                return None
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+
+        return None
 
     def _get_pubchem_cid(self, inchi_key=None, smiles=None):
         """
