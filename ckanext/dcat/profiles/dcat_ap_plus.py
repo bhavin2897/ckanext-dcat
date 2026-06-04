@@ -1,5 +1,7 @@
 import json
 import os
+import tempfile
+import shutil
 from decimal import Decimal, DecimalException
 import requests
 from rdflib import term, URIRef, BNode, Literal, Graph
@@ -66,7 +68,140 @@ from linkml_runtime.utils.schemaview import SchemaView
 # Module-level cache for SchemaView instances
 # Key: schema_name, Value: SchemaView object
 _SCHEMA_VIEW_CACHE = {}
+def _strip_linkml_18_keywords_for_linkml_14(yaml_text):
+    """
+    LinkML Runtime 1.4.0 does not support some newer LinkML keywords
+    used by current DCAT-AP+ / ChemDCAT-AP schemas.
 
+    This removes unsupported YAML blocks such as:
+
+        implements:
+          - owl:NamedIndividual
+
+    and also inline forms such as:
+
+        implements: [owl:NamedIndividual]
+    """
+    unsupported_keys = set([
+        "implements",
+        "bindings",
+        "equals_expression",
+        "exact_mappings",
+        "close_mappings",
+        "narrow_mappings",
+        "broad_mappings",
+        "related_mappings",
+    ])
+
+    lines = yaml_text.splitlines(True)
+    cleaned = []
+    skip_block = False
+    skip_indent = None
+
+    for line in lines:
+        stripped = line.lstrip()
+
+        # Keep blank lines/comments unless we are inside a skipped block
+        if not stripped or stripped.startswith("#"):
+            if not skip_block:
+                cleaned.append(line)
+            continue
+
+        indent = len(line) - len(stripped)
+
+        if skip_block:
+            # Continue skipping child lines of the unsupported key.
+            # Also skip YAML list items at the same indentation, e.g.
+            # implements:
+            # - owl:NamedIndividual
+            if indent > skip_indent or (indent >= skip_indent and stripped.startswith("-")):
+                continue
+
+            # We reached the next normal YAML key/block.
+            skip_block = False
+            skip_indent = None
+
+        if ":" in stripped:
+            key = stripped.split(":", 1)[0].strip()
+            value_after_colon = stripped.split(":", 1)[1].strip()
+
+            if key in unsupported_keys:
+                # Inline case:
+                # implements: [owl:NamedIndividual]
+                if value_after_colon:
+                    continue
+
+                # Block case:
+                # implements:
+                #   - owl:NamedIndividual
+                skip_block = True
+                skip_indent = indent
+                continue
+
+        cleaned.append(line)
+
+    return "".join(cleaned)
+
+
+def _prepare_linkml_14_schema_dir(schema_dir):
+    """
+    Create a temporary sanitized copy of ckanext/dcat/schemas for
+    linkml-runtime==1.4.0.
+
+    It removes unsupported newer LinkML keywords from all YAML files.
+    It also rewrites the remote dcat_ap_plus import to the local schema
+    file, so LinkML 1.4.0 does not fetch a newer incompatible remote schema.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="ckanext_dcat_linkml14_")
+    tmp_schema_dir = os.path.join(tmp_dir, "schemas")
+
+    shutil.copytree(schema_dir, tmp_schema_dir)
+
+    # chem_dcat_ap.yaml imports dcat_ap_plus.
+    # On the test-server branch, dcat_ap_plus.yaml may not exist locally,
+    # so create a sanitized local copy from the remote PURL.
+    local_dcat_ap_plus = os.path.join(tmp_schema_dir, "dcat_ap_plus.yaml")
+    if not os.path.exists(local_dcat_ap_plus):
+        try:
+            resp = requests.get(
+                "https://w3id.org/nfdi-de/dcat-ap-plus/",
+                headers={"Accept": "application/yaml, text/yaml"},
+                timeout=10
+            )
+            resp.raise_for_status()
+
+            dcat_ap_plus_text = _strip_linkml_18_keywords_for_linkml_14(resp.text)
+
+            with open(local_dcat_ap_plus, "w") as fh:
+                fh.write(dcat_ap_plus_text)
+
+            log.info("Created sanitized local dcat_ap_plus.yaml for LinkML 1.4.0")
+        except Exception as e:
+            log.error("Failed to create local dcat_ap_plus.yaml: %s", e)
+
+    for root, dirs, files in os.walk(tmp_schema_dir):
+        for filename in files:
+            if not filename.endswith((".yaml", ".yml")):
+                continue
+
+            path = os.path.join(root, filename)
+
+            with open(path, "r") as fh:
+                text = fh.read()
+
+            text = _strip_linkml_18_keywords_for_linkml_14(text)
+
+            # Make ChemDCAT-AP use the local sanitized dcat_ap_plus.yaml
+            # instead of the remote latest schema.
+            text = text.replace(
+                "- dcatapplus:latest/schema/dcat_ap_plus",
+                "- dcat_ap_plus"
+            )
+
+            with open(path, "w") as fh:
+                fh.write(text)
+
+    return tmp_dir, tmp_schema_dir
 
 class Helpers(object):
     """
@@ -108,9 +243,17 @@ class Helpers(object):
         # 3. Try Local File
         try:
             if os.path.exists(local_yaml_path):
-                sv = SchemaView(local_yaml_path, merge_imports=True)
+                schema_dir = os.path.dirname(local_yaml_path)
+                tmp_root, tmp_schema_dir = _prepare_linkml_14_schema_dir(schema_dir)
+                sanitized_yaml_path = os.path.join(tmp_schema_dir, local_filename)
+
+                sv = SchemaView(sanitized_yaml_path, merge_imports=True)
                 _SCHEMA_VIEW_CACHE[schema_name] = sv
-                log.info(f"Schema '{schema_name}' loaded from local file and cached: {local_yaml_path}")
+                log.info(
+                    "Schema '%s' loaded from sanitized local file and cached: %s",
+                    schema_name,
+                    sanitized_yaml_path
+                )
                 return sv
         except Exception as e:
             log.error(f"Failed to parse local schema '{schema_name}' at {local_yaml_path}: {e}")
@@ -129,14 +272,39 @@ class Helpers(object):
 
         # 5. Parse and Cache
         if schema_content:
+            tmp_path = None
             try:
-                sv = SchemaView(schema_content, merge_imports=True)
+                # LinkML Runtime 1.4.0 expects SchemaView input to be a file path,
+                # not raw YAML content. Write remote schema content to a temp file.
+                fd, tmp_path = tempfile.mkstemp(
+                    prefix="%s_" % schema_name,
+                    suffix=".yaml"
+                )
+
+                schema_content = _strip_linkml_18_keywords_for_linkml_14(schema_content)
+
+                # Avoid remote latest imports when running with linkml-runtime==1.4.0
+                schema_content = schema_content.replace(
+                    "- dcatapplus:latest/schema/dcat_ap_plus",
+                    "- dcat_ap_plus"
+                )
+
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(schema_content)
+
+                sv = SchemaView(tmp_path, merge_imports=True)
                 _SCHEMA_VIEW_CACHE[schema_name] = sv
                 log.info(f"Schema '{schema_name}' loaded from {source} and cached.")
                 return sv
             except Exception as e:
                 log.error(f"Failed to parse schema '{schema_name}': {e}")
                 return None
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
 
         return None
 
