@@ -73,8 +73,14 @@ def _strip_linkml_18_keywords_for_linkml_14(yaml_text):
     LinkML Runtime 1.4.0 does not support some newer LinkML keywords
     used by current DCAT-AP+ / ChemDCAT-AP schemas.
 
-    This strips unsupported keys while keeping the rest of the YAML,
-    including comments, unchanged as much as possible.
+    This removes unsupported YAML blocks such as:
+
+        implements:
+          - owl:NamedIndividual
+
+    and also inline forms such as:
+
+        implements: [owl:NamedIndividual]
     """
     unsupported_keys = set([
         "implements",
@@ -82,38 +88,48 @@ def _strip_linkml_18_keywords_for_linkml_14(yaml_text):
 
     lines = yaml_text.splitlines(True)
     cleaned = []
+    skip_block = False
     skip_indent = None
 
     for line in lines:
         stripped = line.lstrip()
 
+        # Keep blank lines/comments unless we are inside a skipped block
         if not stripped or stripped.startswith("#"):
-            if skip_indent is None:
+            if not skip_block:
                 cleaned.append(line)
             continue
 
         indent = len(line) - len(stripped)
 
-        if skip_indent is not None:
-            if indent > skip_indent:
+        if skip_block:
+            # Continue skipping child lines of the unsupported key.
+            # Also skip YAML list items at the same indentation, e.g.
+            # implements:
+            # - owl:NamedIndividual
+            if indent > skip_indent or (indent >= skip_indent and stripped.startswith("-")):
                 continue
+
+            # We reached the next normal YAML key/block.
+            skip_block = False
             skip_indent = None
 
-        key = stripped.split(":", 1)[0].strip()
+        if ":" in stripped:
+            key = stripped.split(":", 1)[0].strip()
+            value_after_colon = stripped.split(":", 1)[1].strip()
 
-        if key in unsupported_keys and ":" in stripped:
-            after_colon = stripped.split(":", 1)[1].strip()
+            if key in unsupported_keys:
+                # Inline case:
+                # implements: [owl:NamedIndividual]
+                if value_after_colon:
+                    continue
 
-            # Case 1:
-            # implements: [owl:NamedIndividual]
-            if after_colon:
+                # Block case:
+                # implements:
+                #   - owl:NamedIndividual
+                skip_block = True
+                skip_indent = indent
                 continue
-
-            # Case 2:
-            # implements:
-            #   - owl:NamedIndividual
-            skip_indent = indent
-            continue
 
         cleaned.append(line)
 
