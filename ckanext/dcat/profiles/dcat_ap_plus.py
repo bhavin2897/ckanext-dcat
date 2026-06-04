@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import shutil
 from decimal import Decimal, DecimalException
 import requests
 from rdflib import term, URIRef, BNode, Literal, Graph
@@ -234,6 +235,15 @@ class Helpers(object):
                     prefix="%s_" % schema_name,
                     suffix=".yaml"
                 )
+
+                schema_content = _strip_linkml_18_keywords_for_linkml_14(schema_content)
+
+                # Avoid remote latest imports when running with linkml-runtime==1.4.0
+                schema_content = schema_content.replace(
+                    "- dcatapplus:latest/schema/dcat_ap_plus",
+                    "- dcat_ap_plus"
+                )
+
                 with os.fdopen(fd, "w") as fh:
                     fh.write(schema_content)
 
