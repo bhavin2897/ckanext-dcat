@@ -84,6 +84,13 @@ def _strip_linkml_18_keywords_for_linkml_14(yaml_text):
     """
     unsupported_keys = set([
         "implements",
+        "bindings",
+        "equals_expression",
+        "exact_mappings",
+        "close_mappings",
+        "narrow_mappings",
+        "broad_mappings",
+        "related_mappings",
     ])
 
     lines = yaml_text.splitlines(True)
