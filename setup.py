@@ -45,7 +45,7 @@ setup(
     euro_dcat_ap_2=ckanext.dcat.profiles:EuropeanDCATAP2Profile
     euro_dcat_ap_scheming=ckanext.dcat.profiles:EuropeanDCATAPSchemingProfile
     schemaorg=ckanext.dcat.profiles:SchemaOrgProfile
-    dcat_ap_plus=ckanext.dcat.profiles:DCATNFDi4ChemProfile
+    dcat_ap_plus=ckanext.dcat.profiles:DCATAPPlusProfile
     chem_dcat_ap=ckanext.dcat.profiles:ChemDCATAPProfile
     
     [babel.extractors]
