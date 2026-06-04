@@ -157,6 +157,28 @@ def _prepare_linkml_14_schema_dir(schema_dir):
 
     shutil.copytree(schema_dir, tmp_schema_dir)
 
+    # chem_dcat_ap.yaml imports dcat_ap_plus.
+    # On the test-server branch, dcat_ap_plus.yaml may not exist locally,
+    # so create a sanitized local copy from the remote PURL.
+    local_dcat_ap_plus = os.path.join(tmp_schema_dir, "dcat_ap_plus.yaml")
+    if not os.path.exists(local_dcat_ap_plus):
+        try:
+            resp = requests.get(
+                "https://w3id.org/nfdi-de/dcat-ap-plus/",
+                headers={"Accept": "application/yaml, text/yaml"},
+                timeout=10
+            )
+            resp.raise_for_status()
+
+            dcat_ap_plus_text = _strip_linkml_18_keywords_for_linkml_14(resp.text)
+
+            with open(local_dcat_ap_plus, "w") as fh:
+                fh.write(dcat_ap_plus_text)
+
+            log.info("Created sanitized local dcat_ap_plus.yaml for LinkML 1.4.0")
+        except Exception as e:
+            log.error("Failed to create local dcat_ap_plus.yaml: %s", e)
+
     for root, dirs, files in os.walk(tmp_schema_dir):
         for filename in files:
             if not filename.endswith((".yaml", ".yml")):
