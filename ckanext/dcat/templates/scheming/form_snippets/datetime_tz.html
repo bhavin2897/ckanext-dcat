@@ -1,0 +1,86 @@
+{% import 'macros/form.html' as form %}
+{% set date = data.get(field.field_name + '_date') %}
+{% set time = data.get(field.field_name + '_time') %}
+{% set tz = data.get(field.field_name + '_tz', h.get_display_timezone().zone) %}
+
+{% if not date is string and not time is string %}
+    {% set stored_date = data.get(field.field_name) %}
+
+    {% if stored_date %}
+        {% set normalized_date = h.dcat_datetime_for_ckan_form(stored_date) %}
+        {% if normalized_date is not none %}
+            {% set tz = h.get_display_timezone().zone %}
+            {% set localdate = h.scheming_datetime_to_tz(h.date_str_to_datetime(normalized_date), tz).isoformat() %}
+            {% set parts = localdate.split('T') %}
+            {% set date = parts[0] %}
+            {% set time = parts[1] %}
+        {% else %}
+            {# Keep malformed imported metadata visible and round-trippable. #}
+            {% set date = none %}
+            {% set time = none %}
+        {% endif %}
+    {% endif %}
+{% endif %}
+
+{% if stored_date and normalized_date is none %}
+    {% call form.input(
+        field.field_name,
+        id='field-' + field.field_name,
+        label=h.scheming_language_text(field.label),
+        type='text',
+        value=stored_date,
+        error=errors[field.field_name],
+        classes=field.classes if 'classes' in field else ['control-medium'],
+        attrs=dict({"class": "form-control"}, **(field.get('form_attrs', {}))),
+        is_required=h.scheming_field_required(field)
+        )
+    %}
+        {%- snippet 'scheming/form_snippets/help_text.html', field=field -%}
+    {% endcall %}
+{% else %}
+    {% call form.input(
+        field.field_name + '_date',
+        id='field-' + field.field_name + '-date',
+        label=h.scheming_language_text(field.label),
+        type='date',
+        value=date,
+        error=errors[field.field_name + '_date'],
+        classes=field.classes if 'classes' in field else ['control-medium'],
+        attrs=dict({"class": "form-control"}, **(field.get('form_attrs', {}))),
+        is_required=h.scheming_field_required(field)
+        )
+    %}
+        {%- snippet 'scheming/form_snippets/help_text.html', field=field -%}
+    {% endcall %}
+
+    {% call form.input(
+        field.field_name + '_time',
+        id='field-' + field.field_name + '-time',
+        label=h.scheming_language_text(field.get('label_time', 'Time')),
+        type='time',
+        value=time,
+        error=errors[field.field_name + '_time'],
+        classes=field.classes if 'classes' in field else ['control-medium'],
+        attrs=dict({"class": "form-control"}, **(field.get('form_attrs', {}))),
+        is_required=h.scheming_field_required(field)
+        )
+    %}
+        {%- snippet 'scheming/form_snippets/help_text.html', field=field -%}
+    {% endcall %}
+
+    {% set tz_list = h.scheming_get_timezones(field) %}
+    {% call form.select(
+        field.field_name + '_tz',
+        id='field-' + field.field_name + '-tz',
+        label=h.scheming_language_text(field.get('label_tz', 'Timezone')),
+        options=tz_list,
+        selected=tz,
+        error=errors[field.field_name + '_tz'],
+        classes=field.classes if 'classes' in field else ['control-medium'],
+        attrs=dict({"class": "form-control"}, **(field.get('form_attrs', {}))),
+        is_required=h.scheming_field_required(field)
+        )
+    %}
+        {%- snippet 'scheming/form_snippets/help_text.html', field=field -%}
+    {% endcall %}
+{% endif %}

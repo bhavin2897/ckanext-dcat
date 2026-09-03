@@ -20,6 +20,7 @@ from ckanext.dcat.logic import (dcat_dataset_show,
                                 dcat_auth,
                                 )
 from ckanext.dcat import utils
+from ckanext.dcat.datetime_compat import datetime_for_ckan_form
 from ckanext.dcat.validators import dcat_validators
 
 logging = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ class DCATPlugin(p.SingletonPlugin, DefaultTranslation):
             'helper_available': utils.helper_available,
             'dcat_get_endpoint': utils.get_endpoint,
             'dcat_endpoints_enabled': utils.endpoints_enabled,
+            'dcat_datetime_for_ckan_form': datetime_for_ckan_form,
         }
 
     # IActions
